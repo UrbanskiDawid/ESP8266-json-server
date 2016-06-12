@@ -28,7 +28,7 @@ ESP8266WebServer server(webServerPort);
 //--udp ticker
 WiFiUDP g_udp;
 #define g_port 6666
-const unsigned long int t_waitTimeMS = 10000;//10sec (not exact)
+const unsigned long int t_waitTimeMS = 30000;//30sec (not exact)
 unsigned long int t_memory=0;
 
 //--DS18B20
@@ -39,6 +39,11 @@ DallasTemperature DS18B20(&oneWire);
 //the value to publish
 String VALUE="";
 
+
+// ThingSpeak Settings
+char thingSpeakAddress[] = "api.thingspeak.com";
+String thingSpeakWriteAPIKey = "<INSERT-KEY-HERE>";
+  
 void handleRoot() {
   server.send(200, "text/plain", "hello from esp8266!\n\n go to /json or /get to request value.");
 }
@@ -153,7 +158,35 @@ void tick() {
   udpBrodcast();//brodcast value using UDP
 }
 
-String DS18B20toString(DeviceAddress deviceAddress) {
+
+void updateThingSpeak(String tsData)
+{
+  WiFiClient client;
+  if (client.connect(thingSpeakAddress, 80))
+  {
+    client.print("POST /update HTTP/1.1\n");
+    client.print("Host: api.thingspeak.com\n");
+    client.print("Connection: close\n");
+    client.print("X-THINGSPEAKAPIKEY: "+thingSpeakWriteAPIKey+"\n");
+    client.print("Content-Type: application/x-www-form-urlencoded\n");
+    client.print("Content-Length: ");
+    client.print(tsData.length());
+    client.print("\n\n");
+    client.print(tsData);
+
+    if (client.connected())
+    {
+      Serial.print("Connected to ThingSpeak, sent: ");
+      Serial.println(tsData);
+      return;
+    }
+  }
+  
+  Serial.print("Connection to ThingSpeak Failed!");
+  Serial.println(tsData);
+}
+
+String DeviceAddressToString(const DeviceAddress &deviceAddress) {
 
   String ret="0x";
   for (uint8_t i = 0; i < 8; i++)
@@ -167,7 +200,7 @@ String DS18B20toString(DeviceAddress deviceAddress) {
 void updateVALUE(){
 
   uint8_t DS18B20num = DS18B20.getDeviceCount();
-  uint8_t adress;
+  DeviceAddress deviceAddress;
 
   if(DS18B20num==0)
   {
@@ -176,24 +209,38 @@ void updateVALUE(){
     DS18B20.requestTemperatures(); /// sends command for all devices on the bus to perform a temperature conversion
 
     VALUE="";//values will be concatenated
+    String ThingSpeak="";
     for(uint8_t index=0; index<DS18B20num; index++)
     {
+      delay(20);//miliseconds
       VALUE=VALUE+String(index)+":";
-      if(!DS18B20.getAddress(&adress,index))
+      if(!DS18B20.getAddress(deviceAddress,index))
       {
         VALUE=VALUE+"0x00=??*C;";
       }else{
-        VALUE=VALUE+DS18B20toString(&adress)+"=";
+        VALUE=VALUE+DeviceAddressToString(deviceAddress)+"=";
         float temp= DS18B20.getTempCByIndex(index);
-        if(temp == 85.0 || temp == (-127.0)) {  VALUE=VALUE+"error";
-        }else{                                  VALUE=VALUE+String(temp)+"*C";  }
+        if(temp == 85.0 || temp == (-127.0)) {
+          VALUE=VALUE+"error"; 
+        }else{                                  
+           VALUE=VALUE+String(temp)+"*C"; 
+           ThingSpeak+="field";
+           ThingSpeak+=String(index+1);
+           ThingSpeak+="=";
+           ThingSpeak+=String(temp);
+           ThingSpeak+="&";
+        }
         VALUE=VALUE+";";
       }
+    }
+    if(ThingSpeak!="")
+    {
+      updateThingSpeak(ThingSpeak);
     }
   }
   
   Serial.print("TEMP: ");
-  Serial.println(VALUE);  
+  Serial.println(VALUE);
 }
 
 void loop(void) {
@@ -217,6 +264,8 @@ void loop(void) {
     if(connectedToAP) { Serial.println("WIFI connected"); }
     else              { Serial.println("WIFI disconnected"); }
   }
-  
+
+  //ms - give esp8266 time to breathe
+  delay(100);  
 }
 
